@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="lt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Policijos įrašų sistema</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #f2f2f2; color: #111; font: 14px/1.45 Arial, Helvetica, sans-serif; }
+  header { background: #fff; border-bottom: 1px solid #bbb; padding: 8px 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header b { font-size: 15px; letter-spacing: .02em; }
+  main { max-width: 1180px; margin: 0 auto; padding: 12px 16px; }
+  h2 { font-size: 14px; margin: 0 0 6px; text-transform: uppercase; letter-spacing: .03em; color: #333; }
+  section { background: #fff; border: 1px solid #ccc; padding: 10px 12px; margin-bottom: 12px; }
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; align-items: start; }
+  @media (max-width: 860px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
+  .muted { color: #666; } .small { font-size: 12px; }
+  button, select, input, textarea { font: inherit; color: inherit; }
+  button { background: #f4f4f4; border: 1px solid #999; border-radius: 2px; padding: 3px 10px; cursor: pointer; }
+  button:hover { background: #e6e6e6; }
+  button:disabled { color: #999; border-color: #ccc; cursor: default; background: #f4f4f4; }
+  button.primary { background: #333; border-color: #333; color: #fff; }
+  button.primary:hover { background: #111; }
+  input, select, textarea { background: #fff; border: 1px solid #999; border-radius: 0; padding: 3px 5px; }
+  textarea { width: 100%; resize: vertical; }
+  #sql { font: 13px/1.4 Consolas, "Courier New", monospace; min-height: 7em; }
+  #notes { min-height: 14em; font-size: 13px; }
+  [hidden] { display: none !important; }
+
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; }
+  dt { color: #555; } dd { margin: 0; }
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid #999; margin: -2px 0 8px; }
+  .tabs button { border: 1px solid #999; border-bottom: 0; margin-right: -1px; background: #e9e9e9; padding: 4px 12px; }
+  .tabs button.on { background: #fff; position: relative; top: 1px; font-weight: bold; }
+  .cond select, .cond input { max-width: 100%; }
+  .cond input { width: 180px; }
+
+  .results { overflow-x: auto; margin-top: 8px; }
+  table { border-collapse: collapse; font-size: 13px; width: 100%; }
+  th, td { border: 1px solid #ccc; padding: 3px 6px; text-align: left; vertical-align: top; }
+  th { background: #e9e9e9; font-weight: bold; white-space: nowrap; }
+  th.added { font-weight: normal; font-style: italic; }
+  td.long { min-width: 320px; }
+  td.null { color: #999; }
+  tr.pick { cursor: pointer; }
+  tr.pick:hover td { background: #f3f3f3; }
+  tr.sel td { background: #e4e4e4; }
+  .msg { border: 1px solid #999; background: #f7f7f7; padding: 5px 8px; margin-top: 6px; white-space: pre-wrap; }
+  .msg.err { border-color: #8b0000; color: #8b0000; background: #fff; }
+  .msg.ok { border-color: #111; font-weight: bold; }
+  #log div { border-bottom: 1px solid #e3e3e3; padding: 2px 0; font-size: 12px; white-space: pre-wrap; }
+  details summary { cursor: pointer; color: #333; }
+  details ol { margin: 6px 0 0; padding-left: 20px; }
+</style>
+</head>
+<body>
+<header>
+  <b>POLICIJOS ĮRAŠŲ SISTEMA</b>
+  <span class="small muted" id="header-case">byla neatidaryta</span>
+  <button id="show-start" hidden>Nauja / kita byla</button>
+</header>
+
+<main>
+<!-- ============ pradžia ============ -->
+<section id="start">
+  <h2>Bylos atidarymas</h2>
+  <div class="row">
+    <label>Sudėtingumas
+      <select id="level">
+        <option value="easy">lengva: 2 įtariamieji</option>
+        <option value="medium" selected>vidutinė: 3 įtariamieji + užsakovas</option>
+        <option value="hard">sunki: 4 įtariamieji + užsakovas</option>
+      </select></label>
+    <label>Sėkla <input id="seed" size="7" placeholder="atsitiktinė"></label>
+    <button class="primary" id="new">Sukurti naują bylą</button>
+  </div>
+  <div class="row">
+    <label>Bylos nr. <input id="open-id" size="10"></label>
+    <button id="open">Atidaryti</button>
+  </div>
+  <div id="start-msg"></div>
+</section>
+
+<div class="grid" id="game" hidden>
+  <!-- ============ pagrindinis stulpelis ============ -->
+  <div>
+    <section>
+      <h2>Byla</h2>
+      <dl>
+        <dt>Bylos nr.</dt><dd id="c-id"></dd>
+        <dt>Sudėtingumas</dt><dd id="c-level"></dd>
+        <dt>Būsena</dt><dd id="c-status"></dd>
+        <dt>Užuominos / klaidos</dt><dd id="c-score"></dd>
+        <dt>Aprašas</dt><dd id="c-brief"></dd>
+      </dl>
+      <details style="margin-top:8px">
+        <summary>Tyrimo eiga (ką verta patikrinti)</summary>
+        <ol class="small">
+          <li>Raskite nusikaltimo ataskaitą pagal datą ir miestą.</li>
+          <li>Raskite liudininkus ir perskaitykite jų apklausas. Ne viskas, ką jie sako, yra tikslu.</li>
+          <li>Pagal liudininkų aprašymą atrinkite įtariamuosius. Tiks keli žmonės.</li>
+          <li>Perskaitykite įtariamųjų apklausas ir patikrinkite jų žodžius kitose lentelėse: sporto klubo apsilankymus, renginių registracijas, policijos ataskaitas.</li>
+          <li>Ieškokite, kas turėjo motyvą: ataskaitos, kuriose minima auka.</li>
+          <li>Kaltinkite tik tą, kurio negalima atmesti įrodymais.</li>
+        </ol>
+      </details>
+    </section>
+
+    <section>
+      <div class="tabs">
+        <button id="tab-browse" class="on">Įrašų paieška</button>
+        <button id="tab-sql">SQL užklausa</button>
+      </div>
+
+      <div id="browse">
+        <div class="row">
+          <label>Lentelė <select id="b-table"></select></label>
+          <label>Rikiuoti <select id="b-order"></select></label>
+          <select id="b-dir"><option value="ASC">didėjančiai</option><option value="DESC">mažėjančiai</option></select>
+        </div>
+        <div id="conds"></div>
+        <div class="row">
+          <button id="b-add">+ sąlyga</button>
+          <button class="primary" id="b-run">Ieškoti</button>
+          <button id="b-clear">Išvalyti</button>
+          <span class="small muted">Paieška sudaro SQL užklausą, ją matysite skirtuke „SQL užklausa“.</span>
+        </div>
+      </div>
+
+      <div id="console" hidden>
+        <textarea id="sql" spellcheck="false">SELECT * FROM crime_scene_report LIMIT 20;</textarea>
+        <div class="row">
+          <button class="primary" id="run">Vykdyti</button>
+          <span class="small muted">Ctrl+Enter · tik SELECT · iki 200 eilučių · 3 s limitas</span>
+        </div>
+      </div>
+
+      <div id="q-msg"></div>
+      <div class="results" id="results"></div>
+    </section>
+  </div>
+
+  <!-- ============ šoninis stulpelis ============ -->
+  <div>
+    <section>
+      <h2 id="accuse-title">Kaltinimas</h2>
+      <div class="row">
+        <input id="name" style="flex:1" placeholder="Vardas Pavardė">
+        <button class="primary" id="accuse">Pateikti</button>
+      </div>
+      <div class="small muted">Paspaudus eilutę su vardu, jis įrašomas čia.</div>
+      <div id="accuse-msg"></div>
+    </section>
+
+    <section>
+      <h2>Užrašai</h2>
+      <textarea id="notes" placeholder="Įtariamieji, alibi, prieštaravimai…"></textarea>
+      <div class="small muted">Saugoma šioje naršyklėje, atskirai kiekvienai bylai.</div>
+    </section>
+
+    <section>
+      <h2>Užuominos</h2>
+      <button id="hint">Gauti užuominą (−20 taškų)</button>
+      <div id="hint-msg"></div>
+    </section>
+
+    <section>
+      <h2>Veiksmų žurnalas</h2>
+      <div id="log"></div>
+    </section>
+  </div>
+</div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+const LEVEL = { easy: "lengva", medium: "vidutinė", hard: "sunki" };
+const STAGE = { killer: "žudikas", mastermind: "užsakovas" };
+const OPS = [["=", "lygu"], ["<>", "nelygu"], ["contains", "turi tekstą"], ["starts", "prasideda"], [">", "daugiau už"], ["<", "mažiau už"]];
+let game = null;
+let schema = {};   // lentelė -> stulpeliai
+
+// ---------- serveris ----------
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? {} :
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({ error: "serveris neatsakė" }));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+const query = (sql) => api("/api/query", { id: game.id, sql });
+
+function msg(target, text, kind = "") { $(target).replaceChildren(text ? el("div", { className: "msg " + kind, textContent: text }) : ""); }
+function log(text) { $("log").prepend(el("div", { textContent: new Date().toLocaleTimeString("lt-LT") + "  " + text })); }
+
+// ---------- byla ----------
+async function showCase(state) {
+  const first = !game || game.id !== state.id;
+  game = state;
+  try { localStorage.setItem("case", state.id); } catch (e) {}
+  $("start").hidden = true; $("game").hidden = false; $("show-start").hidden = false;
+  $("header-case").textContent = "Byla " + state.id;
+  $("c-id").textContent = state.id + "  (sėkla " + state.seed + ")";
+  $("c-level").textContent = LEVEL[state.level];
+  $("c-status").textContent = state.closed ? "uždaryta" :
+    state.stages.map((s, i) => STAGE[s] + ": " + (i < state.solved ? "nustatytas" : "nenustatytas")).join("; ");
+  $("c-score").textContent = `${state.hints_used} iš ${state.hints_total} / ${state.wrong_answers}`;
+  $("c-brief").textContent = state.briefing;
+  const stage = state.stages[state.solved];
+  $("accuse-title").textContent = state.closed ? "Kaltinimas (byla uždaryta)" : "Kaltinimas: " + STAGE[stage];
+  $("accuse").disabled = $("name").disabled = state.closed;
+  $("hint").disabled = state.closed || state.hints_used >= state.hints_total;
+  if (first) {
+    $("results").replaceChildren(); msg("q-msg", ""); msg("accuse-msg", ""); msg("hint-msg", ""); $("log").replaceChildren();
+    try { $("notes").value = localStorage.getItem("notes:" + state.id) || ""; } catch (e) { $("notes").value = ""; }
+    await loadSchema();
+  }
+}
+
+async function loadSchema() {
+  const r = await query("SELECT table_name, column_name, data_type FROM information_schema.columns " +
+                        "WHERE table_schema = current_schema() ORDER BY table_name, ordinal_position");
+  schema = {};
+  for (const [t, c, type] of r.rows) (schema[t] ||= []).push({ name: c, numeric: type === "integer" });
+  $("b-table").replaceChildren(...Object.keys(schema).map((t) => el("option", { value: t, textContent: t })));
+  $("b-table").value = schema.crime_scene_report ? "crime_scene_report" : Object.keys(schema)[0];
+  tableChanged();
+}
+
+async function newCase() {
+  $("new").disabled = true; msg("start-msg", "Kuriama byla…");
+  try {
+    const state = await api("/api/new", { level: $("level").value, seed: $("seed").value.trim() || null });
+    msg("start-msg", ""); game = null; await showCase(state); log("Sukurta byla " + state.id);
+  } catch (e) { msg("start-msg", e.message, "err"); }
+  $("new").disabled = false;
+}
+
+async function openCase(id) {
+  try { game = null; await showCase(await api("/api/case?id=" + encodeURIComponent(id.trim()))); log("Atidaryta byla " + id); }
+  catch (e) { $("start").hidden = false; $("game").hidden = true; msg("start-msg", e.message, "err"); }
+}
+
+const refresh = async () => showCase(await api("/api/case?id=" + game.id));
+
+// ---------- įrašų paieška ----------
+function tableChanged() {
+  const cols = schema[$("b-table").value] || [];
+  $("b-order").replaceChildren(el("option", { value: "", textContent: "(nerikiuoti)" }),
+    ...cols.map((c) => el("option", { value: c.name, textContent: c.name })));
+  $("conds").replaceChildren();
+  addCond();
+}
+
+function addCond() {
+  const cols = schema[$("b-table").value] || [];
+  const col = el("select", {}, ...cols.map((c) => el("option", { value: c.name, textContent: c.name })));
+  const op = el("select", {}, ...OPS.map(([v, t]) => el("option", { value: v, textContent: t })));
+  const val = el("input", { placeholder: "reikšmė" });
+  val.addEventListener("keydown", (e) => { if (e.key === "Enter") browse(); });
+  const rm = el("button", { textContent: "×", title: "pašalinti sąlygą", onclick: () => row.remove() });
+  const row = el("div", { className: "row cond" }, "kur ", col, op, val, rm);
+  $("conds").append(row);
+  return row;
+}
+
+function buildSql() {
+  const t = $("b-table").value, cols = schema[t];
+  const parts = [];
+  for (const row of $("conds").children) {
+    const [col, op, val] = row.querySelectorAll("select, input");
+    if (val.value.trim() === "") continue;
+    const numeric = cols.find((c) => c.name === col.value)?.numeric;
+    const v = val.value.trim(), text = "'" + v.replace(/'/g, "''") + "'";
+    const lit = numeric && /^-?\d+$/.test(v) ? v : text;
+    if (op.value === "contains") parts.push(`${col.value}::text ILIKE ${"'%" + v.replace(/'/g, "''") + "%'"}`);
+    else if (op.value === "starts") parts.push(`${col.value}::text ILIKE ${"'" + v.replace(/'/g, "''") + "%'"}`);
+    else parts.push(`${col.value} ${op.value} ${lit}`);
+  }
+  let sql = `SELECT *\nFROM ${t}`;
+  if (parts.length) sql += "\nWHERE " + parts.join("\n  AND ");
+  if ($("b-order").value) sql += `\nORDER BY ${$("b-order").value} ${$("b-dir").value}`;
+  return sql + ";";
+}
+
+function browse() { $("sql").value = buildSql(); run($("b-table").value); }
+
+// Šalia id stulpelių įterpia stulpelį "name" su vardu.
+const NAME_LOOKUP = {
+  person: (ids) => `SELECT id, name FROM person WHERE id IN (${ids.join(", ")})`,
+  license: (ids) => `SELECT license_id, name FROM person WHERE license_id IN (${ids.join(", ")})`,
+  member: (ids) => `SELECT m.id, p.name FROM get_fit_now_member m JOIN person p ON p.id = m.person_id ` +
+                   `WHERE m.id IN (${ids.map((v) => "'" + String(v).replace(/'/g, "''") + "'").join(", ")})`,
+};
+
+async function withNames(r, table) {
+  if (r.columns.includes("name")) return r;
+  const kinds = r.columns.map((c) =>
+    c === "person_id" ? "person" : c === "license_id" ? "license" : c === "membership_id" ? "member" :
+    c === "id" && table === "drivers_license" ? "license" : null);
+  if (!kinds.some(Boolean) || !r.rows.length) return r;
+  const names = {};
+  for (const kind of new Set(kinds.filter(Boolean))) {
+    const ids = [...new Set(r.rows.flatMap((row) => row.filter((v, i) => kinds[i] === kind && v !== null)))];
+    if (kind !== "member" && ids.some((v) => typeof v !== "number")) continue;
+    names[kind] = {};
+    if (ids.length) for (const [id, name] of (await query(NAME_LOOKUP[kind](ids))).rows) names[kind][id] = name;
+  }
+  const columns = [], rows = r.rows.map(() => []), added = [];
+  r.columns.forEach((c, i) => {
+    columns.push(c); r.rows.forEach((row, k) => rows[k].push(row[i]));
+    if (kinds[i] && names[kinds[i]]) {
+      added.push(columns.length); columns.push("name");
+      r.rows.forEach((row, k) => rows[k].push(row[i] === null ? null : names[kinds[i]][row[i]] ?? null));
+    }
+  });
+  return { ...r, columns, rows, added };
+}
+
+// ---------- užklausa ----------
+async function run(table = null) {
+  $("run").disabled = $("b-run").disabled = true;
+  msg("q-msg", "");
+  try {
+    const r = await withNames(await query($("sql").value), table);
+    render(r);
+    log(`Užklausa: ${r.rows.length} eil.`);
+  } catch (e) { $("results").replaceChildren(); msg("q-msg", "Klaida: " + e.message, "err"); }
+  $("run").disabled = $("b-run").disabled = false;
+}
+
+function render(r) {
+  if (!r.rows.length) { $("results").replaceChildren(); msg("q-msg", "Įrašų nerasta."); return; }
+  const nameCol = r.columns.indexOf("name");
+  const body = r.rows.map((row) => {
+    const tr = el("tr", {}, ...row.map((v) => el("td", {
+      textContent: v === null ? "NULL" : v,
+      className: v === null ? "null" : typeof v === "string" && v.length > 60 ? "long" : "" })));
+    if (nameCol >= 0) {
+      tr.className = "pick"; tr.title = "įrašyti vardą į kaltinimą";
+      tr.onclick = () => { $("name").value = row[nameCol]; document.querySelectorAll("tr.sel").forEach((x) => x.classList.remove("sel")); tr.classList.add("sel"); };
+    }
+    return tr;
+  });
+  $("results").replaceChildren(
+    el("div", { className: "small muted", textContent: `Rasta ${r.rows.length} eil.` + (r.limited ? " (rodoma ne daugiau kaip 200)" : "") }),
+    el("table", {}, el("thead", {}, el("tr", {}, ...r.columns.map((c, i) => (r.added || []).includes(i)
+      ? el("th", { className: "added", textContent: c, title: "pridėta automatiškai pagal id" })
+      : el("th", { textContent: c })))), el("tbody", {}, ...body)));
+}
+
+// ---------- užuomina, kaltinimas ----------
+async function hint() {
+  try { const r = await api("/api/hint", { id: game.id }); msg("hint-msg", r.message); log(r.message); await refresh(); }
+  catch (e) { msg("hint-msg", e.message, "err"); }
+}
+
+async function accuse() {
+  const name = $("name").value.trim();
+  if (!name) { msg("accuse-msg", "Įrašykite vardą ir pavardę.", "err"); return; }
+  try {
+    const r = await api("/api/accuse", { id: game.id, name });
+    msg("accuse-msg", r.message, r.correct ? "ok" : "err");
+    log(`Kaltinimas: ${name}: ${r.correct ? "teisingas" : "neteisingas"}`);
+    if (r.correct) $("name").value = "";
+    await refresh();
+  } catch (e) { msg("accuse-msg", e.message, "err"); }
+}
+
+// ---------- mygtukai ----------
+function tab(which) {
+  $("browse").hidden = which !== "browse"; $("console").hidden = which !== "sql";
+  $("tab-browse").classList.toggle("on", which === "browse"); $("tab-sql").classList.toggle("on", which === "sql");
+}
+$("tab-browse").onclick = () => tab("browse");
+$("tab-sql").onclick = () => tab("sql");
+$("b-table").onchange = tableChanged;
+$("b-add").onclick = addCond;
+$("b-run").onclick = browse;
+$("b-clear").onclick = tableChanged;
+$("run").onclick = () => run();
+$("sql").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); run(); } });$("new").onclick = newCase;
+$("open").onclick = () => openCase($("open-id").value);
+$("show-start").onclick = () => { $("start").hidden = false; window.scrollTo(0, 0); };
+$("hint").onclick = hint;
+$("accuse").onclick = accuse;
+$("name").addEventListener("keydown", (e) => { if (e.key === "Enter") accuse(); });
+$("notes").addEventListener("input", () => { try { localStorage.setItem("notes:" + game.id, $("notes").value); } catch (e) {} });
+
+try { const saved = localStorage.getItem("case"); if (saved) openCase(saved); } catch (e) {}
+</script>
+</body>
+</html>
